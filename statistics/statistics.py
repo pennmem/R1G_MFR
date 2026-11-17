@@ -170,6 +170,27 @@ def mwr_pr_statistics(mwr_data_bsa):
 
     return stats
 
+# IRTs by serial position of recalled item
+# 1-sample t-test of IRT(primacy item) - IRT(middle item) against 0, by group (matched on output position)
+# Welch t-test of final IRTs, Primacy v. Recency group, with and without transitions to primacy items
+def irt_target_statistics(irt_target_matched_bsa, irt_target_final_bsa):
+    stats = []
+    for strat, data in irt_target_matched_bsa.groupby('strategy'):
+        res = scipy.stats.ttest_1samp(data.irt_diff, popmean=0, alternative='two-sided')
+        stats.append(('primacy - middle', strat, np.mean(data.irt_diff), np.nan, res.statistic, res.pvalue, res.df, cohens_d_1samp(data.irt_diff, popmean=0)))
+
+    prim = irt_target_final_bsa[irt_target_final_bsa.strategy == 'prim']
+    rec = irt_target_final_bsa[irt_target_final_bsa.strategy == 'rec']
+    for col in ['irt_all', 'irt_excl_prim']:
+        x = rec[col].dropna(); y = prim[col].dropna()
+        res = scipy.stats.ttest_ind(x, y, equal_var=False, alternative='two-sided')
+        pooled_sd = np.sqrt(((len(x) - 1) * x.var(ddof=1) + (len(y) - 1) * y.var(ddof=1)) / (len(x) + len(y) - 2))
+        stats.append((f'final {col}', 'rec - prim', np.mean(x), np.mean(y), res.statistic, res.pvalue, res.df, (np.mean(x) - np.mean(y)) / pooled_sd))
+
+    stats = pd.DataFrame(stats, columns=['test', 'group', 'mean_1', 'mean_2', 't_stat', 'p_val', 'dof', 'cohens_d'])
+
+    return stats
+
 # change in recall initiation from early to late lists within session
 # paired t-test (all conditions together)
 def r1_list_statistics(r1_list_data_bsa):

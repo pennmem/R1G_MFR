@@ -840,6 +840,72 @@ def irt_tot_btwn_subj_avg(irt_tot_data):
     return irt_tot_data_bsa
 
 
+# inter-response times by serial position of recalled item (primacy, middle, recency items)
+# transitions between correct recalls; output position = rank of recalled item among correct recalls
+def irt_target_sess(data, ll):
+    w = prim_rec_width(ll)
+    irt_target_data = []
+    rec_evs = data[data['type'] == 'REC_WORD']
+
+    for i in data.list.unique():
+        sp = rec_evs[rec_evs['list'] == i].serial_position.to_numpy()    # current list serial positions
+        sp = sp[sp != 99]                                                # remove last null recall
+        rt = rec_evs[rec_evs['list'] == i].rt.to_numpy()                 # current list response times
+        rt = rt[:len(sp)]                                                # remove last null recall
+
+        sp = mark_repetitions(sp)             # change repetitions to serial position 77
+
+        ncr = len(sp[(sp!=88) & (sp!=77)])    # number of correct recalls
+        op = 1 if len(sp) > 0 and sp[0]!=88 and sp[0]!=77 else 0
+        for j in range(len(sp) - 1):
+            if sp[j+1]!=88 and sp[j+1]!=77:
+                op += 1
+
+            # transition between correct recalls
+            if sp[j]!=88 and sp[j]!=77 and sp[j+1]!=88 and sp[j+1]!=77:
+                target = 'primacy' if sp[j+1] <= w else ('recency' if sp[j+1] > ll - w else 'middle')
+                irt_target_data.append((i, op, ncr, target, rt[j+1]))
+
+    return irt_target_data
+
+def irt_target(df, condition_map):
+    irt_target_data = []
+    for (sub, strat, sess, c, ll, pr), data in tqdm(df.groupby(['worker_id', 'strategy', 'session', 'condition', 'l_length', 'pres_rate'])):
+        for lst, op, ncr, target, irt in irt_target_sess(data, int(ll)):
+            irt_target_data.append((sub, strat, sess, condition_map.get(c), ll, pr, lst, op, ncr, target, irt))
+
+    # store results in dataframe
+    irt_target_data = pd.DataFrame(irt_target_data, columns=['subject', 'strategy', 'session', 'condition', 'l_length', 'pres_rate', 'list', 'output_position', 'ncr', 'target', 'irt'])
+
+    return irt_target_data
+
+# IRT for primacy v. middle items, matched on output position
+def irt_target_matched_btwn_subj_avg(irt_target_data):
+    keys = ['subject', 'strategy', 'condition', 'l_length', 'pres_rate']
+    data = irt_target_data[irt_target_data.target.isin(['primacy', 'middle'])]
+    cells = data.groupby(keys + ['output_position', 'target']).irt.mean().unstack('target').dropna().reset_index()
+    cells['irt_diff'] = cells.primacy - cells.middle
+    irt_target_matched_bsa = cells.groupby(keys)[['primacy', 'middle', 'irt_diff']].mean().reset_index()
+
+    # sort by condition
+    irt_target_matched_bsa = sort_by_condition(irt_target_matched_bsa)
+    return irt_target_matched_bsa
+
+# final transitions with and without transitions to primacy items
+# only lists with at least min_ncr correct recalls
+def irt_target_final_btwn_subj_avg(irt_target_data, n_final=4, min_ncr=5):
+    keys = ['subject', 'strategy', 'condition', 'l_length', 'pres_rate']
+    data = irt_target_data[(irt_target_data.ncr >= min_ncr) & (irt_target_data.ncr - irt_target_data.output_position < n_final)]
+    irt_all = data.groupby(keys).irt.mean().rename('irt_all')
+    irt_excl = data[data.target != 'primacy'].groupby(keys).irt.mean().rename('irt_excl_prim')
+    prop_prim = data.groupby(keys).target.apply(lambda x: np.mean(x == 'primacy')).rename('prop_prim')
+    irt_target_final_bsa = pd.concat([irt_all, irt_excl, prop_prim], axis=1).reset_index()
+
+    # sort by condition
+    irt_target_final_bsa = sort_by_condition(irt_target_final_bsa)
+    return irt_target_final_bsa
+
+
 # temporal clustering score
 # temporal percentile rank
 def percentile_rank_T(actual, possible):
